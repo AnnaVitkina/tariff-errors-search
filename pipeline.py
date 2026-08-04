@@ -1,12 +1,31 @@
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
+import sys
 from pathlib import Path
 
-from tariff_compare.bootstrap import bootstrap_code_root
-
-bootstrap_code_root()
+# Bootstrap sys.path BEFORE any tariff_compare import (required for exec() in Colab).
+_CODE_ROOT = Path("/content/tariff-errors-search")
+_setup_file = _CODE_ROOT / "colab_setup.py"
+if _setup_file.is_file():
+    _spec = importlib.util.spec_from_file_location("colab_setup", _setup_file)
+    _mod = importlib.util.module_from_spec(_spec)
+    assert _spec.loader is not None
+    _spec.loader.exec_module(_mod)
+    _mod.install()
+else:
+    for _root in (_CODE_ROOT, Path.cwd()):
+        if _root.is_dir() and (_root / "tariff_compare").is_dir():
+            _s = str(_root.resolve())
+            if _s not in sys.path:
+                sys.path.insert(0, _s)
+            break
+    else:
+        _s = str(_CODE_ROOT)
+        if _s not in sys.path:
+            sys.path.insert(0, _s)
 
 from tariff_compare.file_prompt import (  # noqa: E402
     _is_interactive,
