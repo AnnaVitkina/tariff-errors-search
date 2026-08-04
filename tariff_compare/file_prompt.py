@@ -6,10 +6,19 @@ from pathlib import Path
 
 
 def is_notebook_kernel() -> bool:
-    """True in Colab / Jupyter (including exec() cells — argv is the kernel launcher)."""
+    """True in Colab / Jupyter (cell exec, !python subprocess, or kernel argv)."""
+    if os.environ.get("COLAB_RELEASE_TAG"):
+        return True
     prog = os.path.basename(sys.argv[0]) if sys.argv else ""
     if "kernel" in prog.lower() or prog.startswith("ipykernel"):
         return True
+    if "IPython" in sys.modules:
+        return True
+    try:
+        get_ipython  # type: ignore[name-defined]  # noqa: B018
+        return True
+    except NameError:
+        pass
     try:
         import google.colab  # noqa: F401
         return True
