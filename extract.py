@@ -1,26 +1,22 @@
 from __future__ import annotations
 
-import argparse
-import importlib.util
-import json
+import os
 import sys
-from pathlib import Path
 
-_CODE_ROOT = Path("/content/tariff-errors-search")
-_setup_file = _CODE_ROOT / "colab_setup.py"
-if _setup_file.is_file():
-    _spec = importlib.util.spec_from_file_location("colab_setup", _setup_file)
-    _mod = importlib.util.module_from_spec(_spec)
-    assert _spec.loader is not None
-    _spec.loader.exec_module(_mod)
-    _mod.install()
+_SETUP = "/content/tariff-errors-search/colab_setup.py"
+if os.path.isfile(_SETUP):
+    with open(_SETUP, encoding="utf-8") as _f:
+        exec(compile(_f.read(), _SETUP, "exec"), {"__file__": _SETUP, "os": os, "sys": sys})
 else:
-    for _root in (_CODE_ROOT, Path.cwd()):
-        if _root.is_dir() and (_root / "tariff_compare").is_dir():
-            _s = str(_root.resolve())
-            if _s not in sys.path:
-                sys.path.insert(0, _s)
+    for _root in ("/content/tariff-errors-search", os.getcwd()):
+        if os.path.isdir(os.path.join(_root, "tariff_compare")):
+            if _root not in sys.path:
+                sys.path.insert(0, _root)
             break
+
+import argparse
+import json
+from pathlib import Path
 
 from tariff_compare.file_prompt import (  # noqa: E402
     _is_interactive,
