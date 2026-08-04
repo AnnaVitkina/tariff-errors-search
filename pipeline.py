@@ -26,7 +26,6 @@ from tariff_compare.file_prompt import (  # noqa: E402
     _is_interactive,
     _print_candidates,
     discover_excel_files,
-    is_notebook_kernel,
     resolve_path,
 )
 from tariff_compare.paths import (  # noqa: E402
@@ -63,9 +62,21 @@ _PIPELINE_CLI_FLAGS = (
 )
 
 
+def _is_notebook_kernel() -> bool:
+    """Colab/Jupyter: argv is the kernel launcher, not pipeline.py."""
+    prog = os.path.basename(sys.argv[0]) if sys.argv else ""
+    if "kernel" in prog.lower() or prog.startswith("ipykernel"):
+        return True
+    try:
+        import google.colab  # noqa: F401
+        return True
+    except ImportError:
+        return False
+
+
 def _argv_for_parser() -> list[str] | None:
     """Notebook kernels pass -f kernel.json (and sometimes pipeline.py) — strip for argparse."""
-    if not is_notebook_kernel():
+    if not _is_notebook_kernel():
         return None
 
     cleaned = ["pipeline.py"]
@@ -127,7 +138,7 @@ def main(argv: list[str] | None = None) -> None:
         help="Use existing <workbook>-extract.jsonl next to each .xlsx (do not re-run extract)",
     )
     parse_argv = argv if argv is not None else _argv_for_parser()
-    if parse_argv is None and is_notebook_kernel():
+    if parse_argv is None and _is_notebook_kernel():
         parse_argv = ["pipeline.py"]
     args = parser.parse_args(parse_argv)
     interactive = _is_interactive()
