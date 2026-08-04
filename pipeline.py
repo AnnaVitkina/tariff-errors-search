@@ -67,6 +67,13 @@ def _is_notebook_kernel() -> bool:
     prog = os.path.basename(sys.argv[0]) if sys.argv else ""
     if "kernel" in prog.lower() or prog.startswith("ipykernel"):
         return True
+    if "IPython" in sys.modules:
+        return True
+    try:
+        get_ipython  # type: ignore[name-defined]  # noqa: B018
+        return True
+    except NameError:
+        pass
     try:
         import google.colab  # noqa: F401
         return True
@@ -74,12 +81,20 @@ def _is_notebook_kernel() -> bool:
         return False
 
 
+def _kernel_polluted_argv() -> bool:
+    """True when Jupyter/Colab left launcher args in sys.argv (unsafe for argparse)."""
+    if not sys.argv:
+        return False
+    prog = os.path.basename(sys.argv[0]).lower()
+    return "kernel" in prog or prog == "colab_kernel_launcher.py"
+
+
 def _argv_for_parser() -> list[str] | None:
     """Notebook kernels pass -f kernel.json (and sometimes pipeline.py) — strip for argparse."""
-    if not _is_notebook_kernel():
+    if not _is_notebook_kernel() and not _kernel_polluted_argv():
         return None
 
-    cleaned = ["pipeline.py"]
+    cleaned: list[str] = []
     args = sys.argv[1:]
     i = 0
     while i < len(args):
@@ -138,8 +153,8 @@ def main(argv: list[str] | None = None) -> None:
         help="Use existing <workbook>-extract.jsonl next to each .xlsx (do not re-run extract)",
     )
     parse_argv = argv if argv is not None else _argv_for_parser()
-    if parse_argv is None and _is_notebook_kernel():
-        parse_argv = ["pipeline.py"]
+    if parse_argv is None and _kernel_polluted_argv():
+        parse_argv = []
     args = parser.parse_args(parse_argv)
     interactive = _is_interactive()
 
@@ -287,4 +302,4 @@ def main(argv: list[str] | None = None) -> None:
 
 
 if __name__ == "__main__":
-    main()
+    main(_argv_for_parser())
