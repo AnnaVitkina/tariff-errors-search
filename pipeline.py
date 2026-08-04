@@ -26,6 +26,7 @@ from tariff_compare.file_prompt import (  # noqa: E402
     _is_interactive,
     _print_candidates,
     discover_excel_files,
+    is_notebook_kernel,
     resolve_path,
 )
 from tariff_compare.paths import (  # noqa: E402
@@ -49,32 +50,43 @@ from tariff_compare.run_naming import (  # noqa: E402
 )
 
 
-def _in_colab() -> bool:
-    try:
-        import google.colab  # noqa: F401
-        return True
-    except ImportError:
-        return False
+_PIPELINE_CLI_FLAGS = (
+    "--old-profile",
+    "--new-profile",
+    "--profile",
+    "--old",
+    "--new",
+    "--skip-extract",
+    "--run-name",
+    "--out",
+    "--thresholds",
+)
 
 
 def _argv_for_parser() -> list[str] | None:
-    """In Colab, strip Jupyter kernel args so interactive prompts work with exec()."""
-    if not _in_colab():
+    """Notebook kernels pass -f kernel.json (and sometimes pipeline.py) — strip for argparse."""
+    if not is_notebook_kernel():
         return None
 
-    cli_flags = {
-        "--old-profile",
-        "--new-profile",
-        "--profile",
-        "--old",
-        "--new",
-        "--skip-extract",
-        "--run-name",
-    }
-    if any(flag in sys.argv for flag in cli_flags):
-        return None
-
-    return ["pipeline.py"]
+    cleaned = ["pipeline.py"]
+    args = sys.argv[1:]
+    i = 0
+    while i < len(args):
+        token = args[i]
+        if token in ("-f",):
+            i += 2
+            continue
+        if token.endswith(".py"):
+            i += 1
+            continue
+        if token in _PIPELINE_CLI_FLAGS or token.split("=", 1)[0] in _PIPELINE_CLI_FLAGS:
+            cleaned.append(token)
+            if "=" not in token and i + 1 < len(args) and not args[i + 1].startswith("-"):
+                cleaned.append(args[i + 1])
+                i += 2
+                continue
+        i += 1
+    return cleaned
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -115,6 +127,8 @@ def main(argv: list[str] | None = None) -> None:
         help="Use existing <workbook>-extract.jsonl next to each .xlsx (do not re-run extract)",
     )
     parse_argv = argv if argv is not None else _argv_for_parser()
+    if parse_argv is None and is_notebook_kernel():
+        parse_argv = ["pipeline.py"]
     args = parser.parse_args(parse_argv)
     interactive = _is_interactive()
 
