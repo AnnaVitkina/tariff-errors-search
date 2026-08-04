@@ -31,6 +31,12 @@ def discover_jsonl_files(root: Path) -> list[Path]:
 
 
 def _is_interactive() -> bool:
+    """Notebooks (Colab) are interactive even when stdin is not a TTY."""
+    try:
+        import google.colab  # noqa: F401
+        return True
+    except ImportError:
+        pass
     return sys.stdin.isatty() and sys.stdout.isatty()
 
 
