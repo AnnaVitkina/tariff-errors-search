@@ -1,7 +1,20 @@
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
+
+
+def is_notebook_kernel() -> bool:
+    """True in Colab / Jupyter (including exec() cells — argv is the kernel launcher)."""
+    prog = os.path.basename(sys.argv[0]) if sys.argv else ""
+    if "kernel" in prog.lower() or prog.startswith("ipykernel"):
+        return True
+    try:
+        import google.colab  # noqa: F401
+        return True
+    except ImportError:
+        return False
 
 
 def discover_excel_files(root: Path) -> list[Path]:
@@ -32,11 +45,8 @@ def discover_jsonl_files(root: Path) -> list[Path]:
 
 def _is_interactive() -> bool:
     """Notebooks (Colab) are interactive even when stdin is not a TTY."""
-    try:
-        import google.colab  # noqa: F401
+    if is_notebook_kernel():
         return True
-    except ImportError:
-        pass
     return sys.stdin.isatty() and sys.stdout.isatty()
 
 
