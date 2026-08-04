@@ -368,6 +368,17 @@ def write_report(
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
+    try:
+        import xlsxwriter  # noqa: F401
+    except ImportError as exc:
+        raise SystemExit(
+            "Missing package 'xlsxwriter' (needed to write report.xlsx).\n"
+            "In Colab run:\n"
+            "  !pip install -q xlsxwriter\n"
+            "or:\n"
+            "  !pip install -q -r /content/tariff-errors-search/requirements.txt"
+        ) from exc
+
     critical_df = _critical_flags(flags)
     review_df = _review_flags(flags)
     added_df = _record_rows(diff.only_new, change_label="New in new tariff")
