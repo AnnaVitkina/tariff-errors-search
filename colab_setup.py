@@ -1,11 +1,20 @@
-"""Add code folder to sys.path — os/sys only (safe when pipeline.py is run via exec())."""
+"""Colab bootstrap: sys.path + missing pip deps (safe when pipeline.py is run via exec())."""
 
 from __future__ import annotations
 
+import importlib.util
 import os
+import subprocess
 import sys
 
 CODE_ROOT = "/content/tariff-errors-search"
+
+_RUNTIME_PACKAGES = (
+    ("xlsxwriter", "xlsxwriter"),
+    ("openpyxl", "openpyxl"),
+    ("pyyaml", "yaml"),
+    ("pandas", "pandas"),
+)
 
 
 def install() -> str:
@@ -29,4 +38,18 @@ def install() -> str:
     return CODE_ROOT
 
 
+def ensure_runtime_deps() -> None:
+    """On Colab, pip-install packages from requirements.txt if they are missing."""
+    if not os.environ.get("COLAB_RELEASE_TAG"):
+        return
+    missing = [pkg for pkg, mod in _RUNTIME_PACKAGES if importlib.util.find_spec(mod) is None]
+    if not missing:
+        return
+    print(f"Installing missing packages for Colab: {', '.join(missing)}")
+    subprocess.check_call(
+        [sys.executable, "-m", "pip", "install", "-q", *missing],
+    )
+
+
 install()
+ensure_runtime_deps()
