@@ -22,8 +22,8 @@ DEFAULT_CODE_ROOT = Path(
 )
 DEFAULT_DATA_ROOT = Path(
     os.environ.get(
-        "TARIFF_DATA_ROOT",
-        "/content/drive/MyDrive/RMT/tariff-errors-search",
+    "/content/drive/Shareddrives/FA Ops Europe: Rate Maintenance Team "
+    "/Documents/AI Adoption RMT/RMT_Red_Flags"
     )
 )
 
