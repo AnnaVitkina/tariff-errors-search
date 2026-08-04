@@ -24,7 +24,6 @@ DEFAULT_DATA_ROOT = Path(
     "/content/drive/Shareddrives/FA Ops Europe: Rate Maintenance Team "
     "/Documents/AI Adoption RMT/RMT_Red_Flags"
 )
-)
 
 # Local dev: if config/ sits in the repo, use the repo as data root unless overridden.
 if not os.environ.get("TARIFF_DATA_ROOT") and (_CODE_FROM_PACKAGE / "config").is_dir():
