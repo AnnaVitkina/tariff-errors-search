@@ -64,6 +64,8 @@ _PIPELINE_CLI_FLAGS = (
 
 def _is_notebook_kernel() -> bool:
     """Colab/Jupyter: argv is the kernel launcher, not pipeline.py."""
+    if os.environ.get("COLAB_RELEASE_TAG"):
+        return True
     prog = os.path.basename(sys.argv[0]) if sys.argv else ""
     if "kernel" in prog.lower() or prog.startswith("ipykernel"):
         return True
@@ -156,7 +158,7 @@ def main(argv: list[str] | None = None) -> None:
     if parse_argv is None and _kernel_polluted_argv():
         parse_argv = []
     args = parser.parse_args(parse_argv)
-    interactive = _is_interactive()
+    interactive = _is_interactive() or _is_notebook_kernel() or _kernel_polluted_argv()
 
     ensure_data_dirs()
 
