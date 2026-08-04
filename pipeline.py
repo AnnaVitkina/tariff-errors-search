@@ -49,7 +49,35 @@ from tariff_compare.run_naming import (  # noqa: E402
 )
 
 
-def main() -> None:
+def _in_colab() -> bool:
+    try:
+        import google.colab  # noqa: F401
+        return True
+    except ImportError:
+        return False
+
+
+def _argv_for_parser() -> list[str] | None:
+    """In Colab, strip Jupyter kernel args so interactive prompts work with exec()."""
+    if not _in_colab():
+        return None
+
+    cli_flags = {
+        "--old-profile",
+        "--new-profile",
+        "--profile",
+        "--old",
+        "--new",
+        "--skip-extract",
+        "--run-name",
+    }
+    if any(flag in sys.argv for flag in cli_flags):
+        return None
+
+    return ["pipeline.py"]
+
+
+def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(
         description=(
             "End-to-end: pick profile + OLD/NEW workbooks from input folders, "
@@ -58,38 +86,36 @@ def main() -> None:
     )
     parser.add_argument(
         "--profile",
-        type=Path,
         default=None,
         help="One profile for BOTH workbooks (same Excel layout).",
     )
     parser.add_argument(
         "--old-profile",
-        type=Path,
         default=None,
         help="Profile for OLD .xlsx only (e.g. etp_ratecard_ambient_d2_v1.yaml).",
     )
     parser.add_argument(
         "--new-profile",
-        type=Path,
         default=None,
         help="Profile for NEW .xlsx only (e.g. tarif_siemens_2026_v1.yaml).",
     )
-    parser.add_argument("--old", type=Path, default=None, help="OLD .xlsx in input/old rate/")
-    parser.add_argument("--new", type=Path, default=None, help="NEW .xlsx in input/new rate/")
+    parser.add_argument("--old", default=None, help="OLD .xlsx in input/old rate/")
+    parser.add_argument("--new", default=None, help="NEW .xlsx in input/new rate/")
     parser.add_argument(
         "--run-name",
         type=str,
         default=None,
         help="Output folder name under output/ (default: compare_<oldStem>__vs__<newStem>)",
     )
-    parser.add_argument("--out", type=Path, default=OUTPUT_DIR, help="Output base directory")
-    parser.add_argument("--thresholds", type=Path, default=THRESHOLDS_PATH)
+    parser.add_argument("--out", default=None, help="Output base directory (default: DATA_ROOT/output)")
+    parser.add_argument("--thresholds", default=None, help="thresholds.yaml path")
     parser.add_argument(
         "--skip-extract",
         action="store_true",
         help="Use existing <workbook>-extract.jsonl next to each .xlsx (do not re-run extract)",
     )
-    args = parser.parse_args()
+    parse_argv = argv if argv is not None else _argv_for_parser()
+    args = parser.parse_args(parse_argv)
     interactive = _is_interactive()
 
     ensure_data_dirs()
@@ -110,7 +136,7 @@ def main() -> None:
 
     pick_old_profile = interactive and args.old_profile is None and args.profile is None
     old_profile_path = resolve_path(
-        args.old_profile or args.profile,
+        Path(args.old_profile) if args.old_profile else (Path(args.profile) if args.profile else None),
         "old-profile",
         "OLD extraction profile (YAML)",
         profile_candidates,
@@ -124,7 +150,7 @@ def main() -> None:
 
     if args.new_profile is not None:
         new_profile_path = resolve_path(
-            args.new_profile,
+            Path(args.new_profile),
             "new-profile",
             "NEW extraction profile (YAML)",
             profile_candidates,
@@ -162,7 +188,7 @@ def main() -> None:
         new_profile_path = old_profile_path
 
     old_wb = resolve_path(
-        args.old,
+        Path(args.old) if args.old else None,
         "old",
         "OLD workbook (.xlsx)",
         old_xlsx,
@@ -174,7 +200,7 @@ def main() -> None:
     assert old_wb is not None
 
     new_wb = resolve_path(
-        args.new,
+        Path(args.new) if args.new else None,
         "new",
         "NEW workbook (.xlsx)",
         new_xlsx,
@@ -202,14 +228,14 @@ def main() -> None:
         run_extract(new_profile_path, new_wb, out_path=new_ext)
 
     run_name = args.run_name or default_run_dir_name(old_wb.name, new_wb.name)
-    out_base = resolve_data_path(args.out)
+    out_base = resolve_data_path(args.out or OUTPUT_DIR)
     run_dir = allocate_run_dir(out_base, run_name)
 
     summary = run_compare(
         old_ext=old_ext,
         new_ext=new_ext,
         run_dir=run_dir,
-        thresholds_path=resolve_data_path(args.thresholds),
+        thresholds_path=resolve_data_path(args.thresholds or THRESHOLDS_PATH),
         old_workbook=old_wb,
         new_workbook=new_wb,
         compare_method="profile_extract_pipeline",
