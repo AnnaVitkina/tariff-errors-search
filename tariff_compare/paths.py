@@ -18,13 +18,12 @@ _CODE_FROM_PACKAGE = Path(__file__).resolve().parent.parent
 # =============================================================================
 
 DEFAULT_CODE_ROOT = Path(
-    os.environ.get("TARIFF_CODE_ROOT", "/content/tariff-errors-search")
+    os.environ.get("TARIFF_CODE_ROOT") or "/content/tariff-errors-search"
 )
 DEFAULT_DATA_ROOT = Path(
-    os.environ.get(
     "/content/drive/Shareddrives/FA Ops Europe: Rate Maintenance Team "
     "/Documents/AI Adoption RMT/RMT_Red_Flags"
-    )
+)
 )
 
 # Local dev: if config/ sits in the repo, use the repo as data root unless overridden.
@@ -51,7 +50,9 @@ NEW_RATE_DIR = INPUT_DIR / "new rate"
 OUTPUT_DIR = DATA_ROOT / "output"
 
 
-def resolve_data_path(path: Path | str) -> Path:
+def resolve_data_path(path: Path | str | None) -> Path:
+    if path is None:
+        raise ValueError("resolve_data_path() received None — check CLI paths or interactive selection.")
     p = Path(path)
     return p.resolve() if p.is_absolute() else (DATA_ROOT / p).resolve()
 
