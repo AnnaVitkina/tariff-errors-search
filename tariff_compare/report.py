@@ -51,12 +51,14 @@ def _describe_record(r: RateRecord) -> str:
         parts.append(str(mode).title())
 
     origin = " ".join(
-        p
+        str(p)
         for p in (r.meta.get("origin_country"), r.meta.get("origin_location"))
-        if p
+        if p is not None and p != ""
     ).strip()
     dest = " ".join(
-        p for p in (r.meta.get("dest_country"), r.meta.get("dest_location")) if p
+        str(p)
+        for p in (r.meta.get("dest_country"), r.meta.get("dest_location"))
+        if p is not None and p != ""
     ).strip()
     if origin and dest:
         parts.append(f"{origin} → {dest}")
@@ -72,7 +74,7 @@ def _describe_record(r: RateRecord) -> str:
         ("Component", "rate_component"),
     ):
         val = r.meta.get(key)
-        if val:
+        if val is not None and val != "":
             parts.append(f"{label}: {val}")
 
     if parts:
