@@ -457,7 +457,7 @@ def _applicability_signature(records: list[RateRecord]) -> dict[str, Any]:
             continue
 
         parts = [
-            rec.text_value or "",
+            str(rec.text_value or ""),
             str(rec.meta.get("logic_label") or ""),
             str(rec.meta.get("charge_id") or ""),
             str(rec.billing_basis or ""),
