@@ -18,14 +18,12 @@ def build_cost_change_rows(diff: DiffResult) -> list[dict[str, Any]]:
         if old_a is not None and new_a is not None:
             row["amount_delta"] = new_a - old_a
         key = ch.get("lane_key", "")
-        if key.startswith("ambiant|") and "|wb=" in key:
+        if not row.get("destination_zone") and key.startswith("ambiant|") and "|wb=" in key:
             parts = key.split("|")
             row["destination_zone"] = parts[1] if len(parts) > 1 else ""
             row["weight_break"] = parts[2].replace("wb=", "") if len(parts) > 2 else ""
-        elif key.startswith("germanetti|"):
+        elif not row.get("weight_break") and key.startswith("germanetti|"):
             parts = key.split("|")
-            row["destination_zone"] = ""
-            row["weight_break"] = ""
             for part in parts[1:]:
                 if part.startswith("wb="):
                     row["weight_break"] = part.replace("wb=", "")
