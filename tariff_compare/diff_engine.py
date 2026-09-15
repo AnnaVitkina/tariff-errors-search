@@ -46,7 +46,16 @@ def diff_records(
             "lane_key": key,
             "record_type": o.record_type,
             "block": o.block,
-            "sheet": o.sheet,
+            "sheet": o.sheet or n.sheet,
+            "weight_break": o.meta.get("weight_break_label")
+            or n.meta.get("weight_break_label"),
+            "destination_zone": o.meta.get("dest_location")
+            or n.meta.get("dest_location")
+            or o.meta.get("dest_country")
+            or n.meta.get("dest_country"),
+            "charge_id": o.meta.get("charge_id") or n.meta.get("charge_id"),
+            "rate_component": o.meta.get("rate_component")
+            or n.meta.get("rate_component"),
         }
         changed = False
         if o.amount is not None or n.amount is not None:
