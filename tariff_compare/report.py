@@ -162,6 +162,7 @@ def _record_rows(records: list[RateRecord], *, change_label: str) -> pd.DataFram
             {
                 "Change": change_label,
                 "Charge type": block_title(r.block),
+                "Charge code": r.meta.get("charge_id") or "-",
                 "Description": _describe_record(r),
                 "Sheet": r.sheet or "-",
                 "Amount": _fmt_value(r.amount) if r.amount is not None else "-",
@@ -173,6 +174,7 @@ def _record_rows(records: list[RateRecord], *, change_label: str) -> pd.DataFram
             {
                 "Change": change_label,
                 "Charge type": "-",
+                "Charge code": "-",
                 "Description": "None",
                 "Sheet": "-",
                 "Amount": "-",
@@ -195,6 +197,8 @@ def _price_change_rows(diff: DiffResult, summary: dict[str, Any]) -> pd.DataFram
         rows.append(
             {
                 "Sheet": ch.get("sheet") or "-",
+                "Charge type": block_title(str(ch.get("block") or "other")),
+                "Charge code": ch.get("charge_id") or "-",
                 "Destination / zone": ch.get("destination_zone") or "-",
                 "Weight break": ch.get("weight_break") or "-",
                 "Previous price": _fmt_value(ch.get("amount_old")),
@@ -210,6 +214,8 @@ def _price_change_rows(diff: DiffResult, summary: dict[str, Any]) -> pd.DataFram
         rows.append(
             {
                 "Sheet": "-",
+                "Charge type": "-",
+                "Charge code": "-",
                 "Destination / zone": "-",
                 "Weight break": "-",
                 "Previous price": "-",
@@ -250,6 +256,243 @@ def _logic_rows(records: list[RateRecord], file_label: str) -> pd.DataFrame:
                 "Rule name": "-",
                 "Location": "-",
                 "Wording in the contract": "No calculation rules detected in this file.",
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def _logic_key_map(records: list[RateRecord]) -> dict[str, RateRecord]:
+    return {r.lane_key: r for r in records if r.record_type == "contract_logic"}
+
+
+def _logic_summary_df(
+    old_records: list[RateRecord],
+    new_records: list[RateRecord],
+) -> pd.DataFrame:
+    """Short was → changed → new overview before detailed wording."""
+    old_map = _logic_key_map(old_records)
+    new_map = _logic_key_map(new_records)
+    rows: list[dict[str, str]] = []
+
+    removed_keys = sorted(set(old_map) - set(new_map))
+    added_keys = sorted(set(new_map) - set(old_map))
+    changed_keys: list[str] = []
+    for key in sorted(set(old_map) & set(new_map)):
+        o_txt = (old_map[key].text_value or "").strip()
+        n_txt = (new_map[key].text_value or "").strip()
+        if o_txt != n_txt:
+            changed_keys.append(key)
+
+    def _label(rec: RateRecord) -> str:
+        return str(rec.meta.get("logic_label") or rec.meta.get("logic_id") or rec.lane_key)
+
+    def _snip(text: str | None, n: int = 120) -> str:
+        s = (text or "").strip().replace("\n", " ")
+        return (s[:n] + "…") if len(s) > n else (s or "-")
+
+    rows.append(
+        {
+            "Category": "Overview",
+            "Count": str(len(old_map)),
+            "What": (
+                f"Previous: {len(old_map)} rule(s). New: {len(new_map)} rule(s). "
+                f"Removed: {len(removed_keys)}. Changed: {len(changed_keys)}. Added: {len(added_keys)}."
+            ),
+            "Previous": "-",
+            "New": "-",
+        }
+    )
+
+    for key in removed_keys:
+        rec = old_map[key]
+        rows.append(
+            {
+                "Category": "Was (previous only)",
+                "Count": "1",
+                "What": _label(rec),
+                "Previous": _snip(rec.text_value),
+                "New": "(removed)",
+            }
+        )
+
+    for key in changed_keys:
+        o, n = old_map[key], new_map[key]
+        rows.append(
+            {
+                "Category": "Changed",
+                "Count": "1",
+                "What": _label(o),
+                "Previous": _snip(o.text_value),
+                "New": _snip(n.text_value),
+            }
+        )
+
+    for key in added_keys:
+        rec = new_map[key]
+        rows.append(
+            {
+                "Category": "New",
+                "Count": "1",
+                "What": _label(rec),
+                "Previous": "(not in previous)",
+                "New": _snip(rec.text_value),
+            }
+        )
+
+    if len(rows) == 1 and not removed_keys and not changed_keys and not added_keys:
+        rows.append(
+            {
+                "Category": "No differences",
+                "Count": "0",
+                "What": "Calculation rules match between previous and new (or none found).",
+                "Previous": "-",
+                "New": "-",
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def _price_summary_df(diff: DiffResult) -> pd.DataFrame:
+    """Aggregated price-change patterns (not per cell)."""
+    cost_rows = build_cost_change_rows(diff)
+    if not cost_rows:
+        return pd.DataFrame(
+            [
+                {
+                    "Category": "Overview",
+                    "What": "No matched price changes (same lane in both files with a different amount).",
+                    "Count": "0",
+                    "Detail": "-",
+                }
+            ]
+        )
+
+    by_sheet: Counter[str] = Counter()
+    by_block: Counter[str] = Counter()
+    by_wb: Counter[str] = Counter()
+    pcts: list[float] = []
+    for ch in cost_rows:
+        sheet = str(ch.get("sheet") or "(no sheet)")
+        by_sheet[sheet] += 1
+        block = str(ch.get("block") or "other")
+        by_block[block_title(block)] += 1
+        wb = str(ch.get("weight_break") or ch.get("weight_break_label") or "")
+        if wb:
+            by_wb[wb] += 1
+        pct = ch.get("pct_change")
+        if pct is not None:
+            try:
+                pcts.append(float(pct))
+            except (TypeError, ValueError):
+                pass
+
+    rows: list[dict[str, str]] = []
+    avg_pct = sum(pcts) / len(pcts) if pcts else None
+    max_pct = max(pcts, key=abs) if pcts else None
+    overview_bits = [f"{len(cost_rows)} matched price change(s)"]
+    if avg_pct is not None:
+        overview_bits.append(f"typical change {avg_pct:+.1f}%")
+    if max_pct is not None:
+        overview_bits.append(f"largest {max_pct:+.1f}%")
+    rows.append(
+        {
+            "Category": "Overview",
+            "What": "; ".join(overview_bits),
+            "Count": str(len(cost_rows)),
+            "Detail": (
+                "Detail rows below list individual matched lanes. "
+                "Use this summary to see where changes concentrate."
+            ),
+        }
+    )
+
+    for sheet, cnt in by_sheet.most_common(12):
+        rows.append(
+            {
+                "Category": "By sheet",
+                "What": sheet,
+                "Count": str(cnt),
+                "Detail": f"{cnt} price change(s) on this sheet",
+            }
+        )
+    for block, cnt in by_block.most_common(8):
+        rows.append(
+            {
+                "Category": "By charge type",
+                "What": block,
+                "Count": str(cnt),
+                "Detail": f"{cnt} change(s)",
+            }
+        )
+    for wb, cnt in by_wb.most_common(8):
+        rows.append(
+            {
+                "Category": "By weight break",
+                "What": wb,
+                "Count": str(cnt),
+                "Detail": f"{cnt} change(s) for this break",
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def _record_summary_df(records: list[RateRecord], *, kind: str) -> pd.DataFrame:
+    """Summary of added or removed lines by sheet and charge type."""
+    if not records:
+        return pd.DataFrame(
+            [
+                {
+                    "Category": "Overview",
+                    "What": f"No {kind} lines.",
+                    "Count": "0",
+                    "Detail": "-",
+                }
+            ]
+        )
+
+    by_sheet: Counter[str] = Counter()
+    by_block: Counter[str] = Counter()
+    by_sheet_block: Counter[tuple[str, str]] = Counter()
+    for r in records:
+        sheet = r.sheet or "(no sheet)"
+        block = block_title(r.block)
+        by_sheet[sheet] += 1
+        by_block[block] += 1
+        by_sheet_block[(sheet, block)] += 1
+
+    rows: list[dict[str, str]] = [
+        {
+            "Category": "Overview",
+            "What": f"{len(records)} {kind} line(s) across {len(by_sheet)} sheet(s)",
+            "Count": str(len(records)),
+            "Detail": "Detail rows below list each line.",
+        }
+    ]
+    for sheet, cnt in by_sheet.most_common(20):
+        rows.append(
+            {
+                "Category": "By sheet",
+                "What": sheet,
+                "Count": str(cnt),
+                "Detail": f"{cnt} {kind} line(s)",
+            }
+        )
+    for block, cnt in by_block.most_common(12):
+        rows.append(
+            {
+                "Category": "By charge type",
+                "What": block,
+                "Count": str(cnt),
+                "Detail": f"{cnt} {kind} line(s)",
+            }
+        )
+    for (sheet, block), cnt in by_sheet_block.most_common(15):
+        rows.append(
+            {
+                "Category": "By sheet + type",
+                "What": f"{sheet} — {block}",
+                "Count": str(cnt),
+                "Detail": f"{cnt} {kind} line(s)",
             }
         )
     return pd.DataFrame(rows)
@@ -355,6 +598,71 @@ def _write_dataframe(
     ws.freeze_panes(1, 0)
 
 
+def _write_sheet_with_summary(
+    writer: pd.ExcelWriter,
+    sheet_name: str,
+    summary_df: pd.DataFrame,
+    detail_df: pd.DataFrame,
+    styles: dict[str, Any],
+    *,
+    summary_title: str = "Summary",
+    detail_title: str = "Details",
+    highlight_large_pct_col: str | None = None,
+    pct_threshold: float = 100,
+    summary_widths: dict[int, int] | None = None,
+    detail_widths: dict[int, int] | None = None,
+) -> None:
+    """Write summary block first, then detailed table on the same sheet."""
+    workbook = writer.book
+    ws = workbook.add_worksheet(sheet_name)
+    writer.sheets[sheet_name] = ws
+    row = 0
+
+    ws.write(row, 0, summary_title, styles["subtitle"])
+    row += 1
+    for c, col_name in enumerate(summary_df.columns):
+        ws.write(row, c, col_name, styles["header"])
+    row += 1
+    for r_idx in range(len(summary_df)):
+        for c, col_name in enumerate(summary_df.columns):
+            ws.write(row, c, summary_df.iloc[r_idx, c], styles["body"])
+        row += 1
+
+    row += 1
+    ws.write(row, 0, detail_title, styles["subtitle"])
+    row += 1
+    detail_header_row = row
+    for c, col_name in enumerate(detail_df.columns):
+        ws.write(row, c, col_name, styles["header"])
+    row += 1
+
+    pct_idx = (
+        list(detail_df.columns).index(highlight_large_pct_col)
+        if highlight_large_pct_col and highlight_large_pct_col in detail_df.columns
+        else None
+    )
+    for r_idx in range(len(detail_df)):
+        row_fmt = styles["body"]
+        if pct_idx is not None:
+            raw = detail_df.iloc[r_idx, pct_idx]
+            try:
+                val = float(str(raw).replace("%", "").replace("+", ""))
+                if abs(val) >= pct_threshold:
+                    row_fmt = styles["critical"]
+            except (TypeError, ValueError):
+                pass
+        for c in range(len(detail_df.columns)):
+            ws.write(row, c, detail_df.iloc[r_idx, c], row_fmt)
+        row += 1
+
+    widths = summary_widths or detail_widths or {}
+    max_cols = max(len(summary_df.columns), len(detail_df.columns), 1)
+    for c in range(max_cols):
+        width = widths.get(c, 18)
+        ws.set_column(c, c, width)
+    ws.freeze_panes(detail_header_row + 1, 0)
+
+
 def write_report(
     out_path: Path,
     diff: DiffResult,
@@ -447,11 +755,12 @@ def write_report(
         row += 1
         tab_help = [
             "Critical issues — problems that may affect billing; check these first.",
-            "Also review — changes worth confirming but not automatically critical.",
-            "Calculation rules — contract wording side by side (previous vs new).",
-            "Price changes — matched lanes where the amount changed.",
-            "New in new tariff — charges or lanes that appear only in the new file.",
-            "Removed from previous — charges or lanes that disappeared.",
+            "Also review — changes worth confirming but not automatically critical "
+            "(charge codes, service codes, postal/zone codes, etc.).",
+            "Calculation rules — short summary (was / changed / new), then full wording.",
+            "Price changes — pattern summary by sheet/type, then matched lane details.",
+            "New in new tariff — summary by sheet/type, then each new line.",
+            "Removed from previous — summary by sheet/type, then each removed line.",
         ]
         for line in tab_help:
             dash.write(row, 0, f"• {line}", styles["body"])
@@ -527,35 +836,45 @@ def write_report(
             col_widths={0: 5, 1: 22, 2: 24, 3: 48, 4: 22, 5: 22, 6: 36, 7: 36, 8: 44, 9: 16},
         )
 
-        # --- 4. Calculation rules ---
+        # --- 4. Calculation rules (summary first, then detail) ---
         if old_records is not None and new_records is not None:
-            logic_df = pd.concat(
+            logic_summary = _logic_summary_df(old_records, new_records)
+            logic_detail = pd.concat(
                 [
                     _logic_rows(old_records, str(summary.get("old_file", "Previous"))),
                     _logic_rows(new_records, str(summary.get("new_file", "New"))),
                 ],
                 ignore_index=True,
             )
-            _write_dataframe(
+            _write_sheet_with_summary(
                 writer,
                 "Calculation rules",
-                logic_df,
+                logic_summary,
+                logic_detail,
                 styles,
-                col_widths={0: 36, 1: 32, 2: 28, 3: 70},
+                summary_title="Summary — was → changed → new",
+                detail_title="Details — full wording by file",
+                summary_widths={0: 22, 1: 8, 2: 36, 3: 48, 4: 48},
+                detail_widths={0: 36, 1: 32, 2: 28, 3: 70},
             )
 
-        # --- 5. Price changes ---
+        # --- 5. Price changes (summary first, then detail) ---
         cost_max = int(summary.get("cost_changes_detail_max", 100))
         cost_rows = build_cost_change_rows(diff)
+        price_summary = _price_summary_df(diff)
         if len(cost_rows) <= cost_max and cost_rows:
-            _write_dataframe(
+            _write_sheet_with_summary(
                 writer,
                 "Price changes",
+                price_summary,
                 price_df,
                 styles,
+                summary_title="Summary — where prices changed (patterns)",
+                detail_title="Details — matched lanes with amount change",
                 highlight_large_pct_col="% change",
                 pct_threshold=float(summary.get("price_change_red_flag_pct", 100)),
-                col_widths={0: 16, 1: 18, 2: 14, 3: 14, 4: 14, 5: 12, 6: 12, 7: 18, 8: 18},
+                summary_widths={0: 18, 1: 40, 2: 10, 3: 48},
+                detail_widths={0: 16, 1: 18, 2: 14, 3: 18, 4: 14, 5: 14, 6: 14, 7: 12, 8: 12, 9: 16, 10: 16},
             )
         else:
             note_df = pd.DataFrame(
@@ -573,22 +892,42 @@ def write_report(
                     }
                 ]
             )
-            _write_dataframe(writer, "Price changes", note_df, styles, col_widths={0: 40, 1: 60})
+            _write_sheet_with_summary(
+                writer,
+                "Price changes",
+                price_summary,
+                note_df,
+                styles,
+                summary_title="Summary — where prices changed (patterns)",
+                detail_title="Details",
+                summary_widths={0: 18, 1: 40, 2: 10, 3: 48},
+                detail_widths={0: 40, 1: 60},
+            )
 
-        # --- 6. New / Removed ---
-        _write_dataframe(
+        # --- 6. New / Removed (summary first, then detail) ---
+        added_detail = added_df.drop(columns=["Change"])
+        removed_detail = removed_df.drop(columns=["Change"])
+        _write_sheet_with_summary(
             writer,
             "New in new tariff",
-            added_df.drop(columns=["Change"]),
+            _record_summary_df(diff.only_new, kind="new"),
+            added_detail,
             styles,
-            col_widths={0: 22, 1: 50, 2: 18, 3: 12, 4: 16},
+            summary_title="Summary — new lines by sheet / charge type",
+            detail_title="Details — each new line",
+            summary_widths={0: 18, 1: 40, 2: 10, 3: 36},
+            detail_widths={0: 22, 1: 14, 2: 50, 3: 18, 4: 12, 5: 16},
         )
-        _write_dataframe(
+        _write_sheet_with_summary(
             writer,
             "Removed from previous",
-            removed_df.drop(columns=["Change"]),
+            _record_summary_df(diff.only_old, kind="removed"),
+            removed_detail,
             styles,
-            col_widths={0: 22, 1: 50, 2: 18, 3: 12, 4: 16},
+            summary_title="Summary — removed lines by sheet / charge type",
+            detail_title="Details — each removed line",
+            summary_widths={0: 18, 1: 40, 2: 10, 3: 36},
+            detail_widths={0: 22, 1: 14, 2: 50, 3: 18, 4: 12, 5: 16},
         )
 
         # --- Optional: technical sheets for power users (hidden at end) ---
