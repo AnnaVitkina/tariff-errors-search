@@ -115,6 +115,49 @@ def _header_label(
     return f"col{col_excel}"
 
 
+_REMARKS_HEADER_RE = re.compile(r"(?i)^\s*remarks?\s*$")
+
+
+def _find_remarks_column(df: pd.DataFrame, header_row: int) -> int | None:
+    """Return 1-based Excel column whose header is Remark/Remarks (profile-independent)."""
+    ri = _r0(header_row)
+    if ri < 0 or ri >= len(df):
+        return None
+    for c in range(df.shape[1]):
+        raw = cell_str(df.iat[ri, c])
+        if not raw:
+            continue
+        # Headers may be multi-line; test each line and the collapsed form.
+        for piece in (raw, raw.replace("\n", " ")):
+            if _REMARKS_HEADER_RE.match(piece.strip()):
+                return c + 1
+            for line in raw.splitlines():
+                if _REMARKS_HEADER_RE.match(line.strip()):
+                    return c + 1
+    return None
+
+
+def _attach_remarks(
+    row_base: dict[str, Any],
+    df: pd.DataFrame,
+    row_excel: int,
+    remarks_col: int | None,
+    *,
+    profile_maps_text_value: bool,
+) -> None:
+    """Fill extras.remarks (and text_value when free) from an auto-detected Remarks column."""
+    if remarks_col is None:
+        return
+    remarks = cell_str(_read_field(df, row_excel, remarks_col))
+    if not remarks:
+        return
+    extras = dict(row_base.get("extras") or {})
+    extras["remarks"] = remarks[:2000]
+    row_base["extras"] = extras
+    if not profile_maps_text_value and not row_base.get("text_value"):
+        row_base["text_value"] = remarks[:2000]
+
+
 def _emit_line(
     base: dict[str, Any],
     *,
@@ -177,6 +220,9 @@ def _iter_wide_matrix(
             defaults[field] = None  # filled per row
 
     currency_col = table.get("currency_column")
+    profile_maps_text_value = "text_value" in col_map
+    # Auto-pick Remark/Remarks even when the YAML profile omitted it.
+    remarks_col = _find_remarks_column(df, header_row)
 
     for row_excel in range(data_start, last_row_excel + 1):
         ri = _r0(row_excel)
@@ -200,6 +246,13 @@ def _iter_wide_matrix(
                 "default_currency", "EUR"
             )
         row_base["currency"] = currency
+        _attach_remarks(
+            row_base,
+            df,
+            row_excel,
+            remarks_col,
+            profile_maps_text_value=profile_maps_text_value,
+        )
 
         for rc in table.get("rate_columns") or []:
             col = int(rc["col"])
@@ -280,36 +333,78 @@ def _iter_logic_scan(
     source_file: str,
     table: dict[str, Any],
 ) -> Iterator[dict[str, Any]]:
-    patterns = table.get("patterns") or []
-    compiled = [(p["id"], p.get("label", p["id"]), re.compile(p["regex"], re.I)) for p in patterns]
+    # Always include common contract patterns so floater / rounding / fuel text
+    # is caught even when the Gem profile omitted them.
+    _DEFAULT_LOGIC_PATTERNS: list[dict[str, str]] = [
+        {
+            "id": "rounding_rule",
+            "label": "Decimal rounding and weight rule",
+            "regex": r"(?i)decimal\s*places|price\s*per\s*100\s*kg|round(?:ing)?\s*up.*(?:weight|kg|hundred)",
+        },
+        {
+            "id": "floater_rule",
+            "label": "Fuel / diesel floater",
+            "regex": r"(?i)\bfloater\b|dieselfloater|diesel\s*floater|lng\s*floater|hvo\s*floater|no\s*floater\s*applicable",
+        },
+        {
+            "id": "fuel_surcharge_rule",
+            "label": "Fuel surcharge wording",
+            "regex": r"(?i)fuel\s*surcharge|fsc\b",
+        },
+    ]
+    seen_ids = {str(p.get("id")) for p in (table.get("patterns") or []) if p.get("id")}
+    patterns = list(table.get("patterns") or [])
+    for p in _DEFAULT_LOGIC_PATTERNS:
+        if p["id"] not in seen_ids:
+            patterns.append(p)
+
+    compiled = [
+        (p["id"], p.get("label", p["id"]), re.compile(p["regex"], re.I)) for p in patterns
+    ]
     if not compiled:
         return
+    # One hit per logic_id per sheet (prefer first match) so OLD/NEW compare by rule id.
+    emitted_ids: set[str] = set()
     for r in range(len(df)):
         for c in range(df.shape[1]):
             text = cell_str(df.iat[r, c])
             if not text or len(text) < 8:
                 continue
             for logic_id, label, rx in compiled:
+                if logic_id in emitted_ids:
+                    continue
                 if rx.search(text):
+                    # Prefer richer wording from nearby cells on the same row
+                    # (e.g. label «Floater:» + value «No Floater applicable.»).
+                    neighbor_bits: list[str] = []
+                    for cc in range(max(0, c - 1), min(df.shape[1], c + 4)):
+                        bit = cell_str(df.iat[r, cc])
+                        if bit:
+                            neighbor_bits.append(bit)
+                    rich = " ".join(neighbor_bits).strip()
+                    use_text = rich if len(rich) > len(text) else text
                     line = _emit_line(
                         {
                             "charge_kind": "contract_logic",
                             "mode": None,
                             "calculation_method": logic_id,
                             "rate_component": label,
+                            "charge_id": logic_id,
                         },
                         amount=None,
                         rate_component=label,
                         billing_basis=None,
                         weight_break_label=None,
-                        text_value=text[:2000],
+                        text_value=use_text[:2000],
                         source_sheet=sheet,
                         source_row=r + 1,
                         source_col=c + 1,
                         source_file=source_file,
                     )
                     line["extras"] = {"logic_id": logic_id, "logic_label": label}
-                    line["match_key"] = build_match_key(line)
+                    # Stable key across OLD/NEW so wording changes raise LOGIC_TEXT_CHANGED.
+                    line["match_key"] = f"contract_logic|{logic_id}|{sheet}"
+                    emitted_ids.add(logic_id)
                     yield line
                     break
 
