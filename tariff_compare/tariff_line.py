@@ -70,14 +70,14 @@ def tariff_line_to_rate_record(line: dict[str, Any]) -> RateRecord:
         meta["calculation_method"] = line["calculation_method"]
     extras = line.get("extras")
     if isinstance(extras, dict):
-        for k in ("logic_id", "logic_label"):
+        for k in ("logic_id", "logic_label", "remarks"):
             if extras.get(k) is not None:
                 meta[k] = extras[k]
         meta.update(
             {
                 f"extra_{k}": v
                 for k, v in extras.items()
-                if k not in ("logic_id", "logic_label")
+                if k not in ("logic_id", "logic_label", "remarks")
             }
         )
 
